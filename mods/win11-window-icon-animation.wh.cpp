@@ -2,7 +2,7 @@
 // @id              win11-window-icon-animation
 // @name            Windows 11 Genie Window Animation
 // @description     Custom genie-style launch, restore, minimize and close animation.
-// @version         0.6.1
+// @version         0.7.0
 // @author          cuuw619-maker
 // @github          https://github.com/cuuw619-maker/Modpack
 // @include         *
@@ -110,6 +110,8 @@ using SetWindowPlacement_t = BOOL(WINAPI*)(HWND, const WINDOWPLACEMENT*);
 using CloseWindow_t = BOOL(WINAPI*)(HWND);
 using DefWindowProcW_t = LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
 using SetWindowPos_t = BOOL(WINAPI*)(HWND, HWND, int, int, int, int, UINT);
+using SendMessageW_t = LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
+using PostMessageW_t = BOOL(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
 
 ShowWindow_t ShowWindow_Original = nullptr;
 ShowWindowAsync_t ShowWindowAsync_Original = nullptr;
@@ -117,6 +119,8 @@ SetWindowPlacement_t SetWindowPlacement_Original = nullptr;
 CloseWindow_t CloseWindow_Original = nullptr;
 DefWindowProcW_t DefWindowProcW_Original = nullptr;
 SetWindowPos_t SetWindowPos_Original = nullptr;
+SendMessageW_t SendMessageW_Original = nullptr;
+PostMessageW_t PostMessageW_Original = nullptr;
 
 constexpr wchar_t kCloseBypass[] = L"Win11Genie.CloseBypass";
 constexpr wchar_t kHiddenByUs[] = L"Win11Genie.HiddenByUs";
@@ -2291,6 +2295,144 @@ LRESULT WINAPI DefWindowProcW_Hook(
         lParam);
 }
 
+LRESULT WINAPI SendMessageW_Hook(
+    HWND hwnd,
+    UINT message,
+    WPARAM wParam,
+    LPARAM lParam) {
+
+    if (!g_unloading.load(std::memory_order_relaxed) &&
+        hwnd &&
+        (message == WM_SYSCOMMAND || message == WM_CLOSE)) {
+
+        if (message == WM_SYSCOMMAND) {
+            const UINT command =
+                static_cast<UINT>(wParam & 0xFFF0u);
+
+            if (command == SC_MINIMIZE) {
+                if (BeginMinimize(hwnd)) {
+                    Wh_Log(L"Win11Genie: intercepted SendMessage minimize");
+                    SetPropW(
+                        hwnd,
+                        kMinimizeBypass,
+                        reinterpret_cast<HANDLE>(1));
+
+                    return SendMessageW_Original(
+                        hwnd,
+                        message,
+                        wParam,
+                        lParam);
+                }
+            }
+
+            if (command == SC_RESTORE &&
+                IsIconic(hwnd)) {
+                if (BeginRestore(hwnd, SW_RESTORE)) {
+                    Wh_Log(L"Win11Genie: intercepted SendMessage restore");
+                    return 0;
+                }
+            }
+
+            if (command == SC_CLOSE) {
+                if (BeginClose(
+                        hwnd,
+                        message,
+                        wParam,
+                        lParam)) {
+                    Wh_Log(L"Win11Genie: intercepted SendMessage close");
+                    return 0;
+                }
+            }
+        }
+
+        if (message == WM_CLOSE) {
+            if (BeginClose(
+                    hwnd,
+                    message,
+                    wParam,
+                    lParam)) {
+                Wh_Log(L"Win11Genie: intercepted SendMessage WM_CLOSE");
+                return 0;
+            }
+        }
+    }
+
+    return SendMessageW_Original(
+        hwnd,
+        message,
+        wParam,
+        lParam);
+}
+
+BOOL WINAPI PostMessageW_Hook(
+    HWND hwnd,
+    UINT message,
+    WPARAM wParam,
+    LPARAM lParam) {
+
+    if (!g_unloading.load(std::memory_order_relaxed) &&
+        hwnd &&
+        (message == WM_SYSCOMMAND || message == WM_CLOSE)) {
+
+        if (message == WM_SYSCOMMAND) {
+            const UINT command =
+                static_cast<UINT>(wParam & 0xFFF0u);
+
+            if (command == SC_MINIMIZE) {
+                if (BeginMinimize(hwnd)) {
+                    Wh_Log(L"Win11Genie: intercepted PostMessage minimize");
+                    SetPropW(
+                        hwnd,
+                        kMinimizeBypass,
+                        reinterpret_cast<HANDLE>(1));
+
+                    return PostMessageW_Original(
+                        hwnd,
+                        message,
+                        wParam,
+                        lParam);
+                }
+            }
+
+            if (command == SC_RESTORE &&
+                IsIconic(hwnd)) {
+                if (BeginRestore(hwnd, SW_RESTORE)) {
+                    Wh_Log(L"Win11Genie: intercepted PostMessage restore");
+                    return TRUE;
+                }
+            }
+
+            if (command == SC_CLOSE) {
+                if (BeginClose(
+                        hwnd,
+                        message,
+                        wParam,
+                        lParam)) {
+                    Wh_Log(L"Win11Genie: intercepted PostMessage close");
+                    return TRUE;
+                }
+            }
+        }
+
+        if (message == WM_CLOSE) {
+            if (BeginClose(
+                    hwnd,
+                    message,
+                    wParam,
+                    lParam)) {
+                Wh_Log(L"Win11Genie: intercepted PostMessage WM_CLOSE");
+                return TRUE;
+            }
+        }
+    }
+
+    return PostMessageW_Original(
+        hwnd,
+        message,
+        wParam,
+        lParam);
+}
+
 BOOL WINAPI SetWindowPos_Hook(
     HWND hwnd,
     HWND insertAfter,
@@ -2312,6 +2454,22 @@ BOOL WINAPI SetWindowPos_Hook(
 
 BOOL Wh_ModInit() {
     LoadSettings();
+
+    if (!Wh_SetFunctionHook(
+            reinterpret_cast<void*>(SendMessageW),
+            reinterpret_cast<void*>(SendMessageW_Hook),
+            reinterpret_cast<void**>(
+                &SendMessageW_Original))) {
+        return FALSE;
+    }
+
+    if (!Wh_SetFunctionHook(
+            reinterpret_cast<void*>(PostMessageW),
+            reinterpret_cast<void*>(PostMessageW_Hook),
+            reinterpret_cast<void**>(
+                &PostMessageW_Original))) {
+        return FALSE;
+    }
 
     if (!Wh_SetFunctionHook(
             reinterpret_cast<void*>(ShowWindow),
