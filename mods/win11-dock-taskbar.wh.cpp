@@ -2,7 +2,7 @@
 // @id              win11-dock-taskbar
 // @name            Win11 Dock Taskbar
 // @description     Custom Windows 11 taskbar magnification with edge-anchored icons.
-// @version         0.2.0
+// @version         0.3.0
 // @author          cuuw619-maker
 // @github          https://github.com/cuuw619-maker/Modpack
 // @include         explorer.exe
@@ -21,10 +21,14 @@ The important visual difference from a centered scale is the transform origin:
 on the normal bottom taskbar icons are anchored to their bottom edge, so an
 enlarged icon grows upward out of the taskbar instead of disappearing beneath it.
 
-The effect is calculated from the cursor distance to each application button.
-Nearby buttons scale less and are displaced to keep the row readable.
+The effect is calculated from the cursor distance to application buttons and
+the Start button. Nearby buttons scale less and are displaced to keep the row readable.
 
-Only Windows 11 Explorer taskbar elements are modified.
+The transform origin is anchored to the taskbar's outer edge. Ancestor clipping
+is removed along the affected visual path, so enlarged icons can visibly extend
+outside the taskbar surface instead of being cut at its border.
+
+Only the application TaskListButton elements and the Start button are modified.
 */
 // ==/WindhawkModReadme==
 
@@ -92,8 +96,14 @@ struct Settings {
     double edgeLift = 2.0;
 };
 
+enum class IconKind {
+    App,
+    Start
+};
+
 struct IconState {
     weak_ref<FrameworkElement> element;
+    IconKind kind = IconKind::App;
     ScaleTransform scale{nullptr};
     TranslateTransform translate{nullptr};
     double center = 0.0;
@@ -216,15 +226,28 @@ DockEdge DetectEdge(HWND hwnd) {
     return DockEdge::Bottom;
 }
 
-bool IsTaskButton(FrameworkElement const& element) {
+bool IsScalableTaskElement(FrameworkElement const& element, IconKind* kind) {
     if (!element) {
         return false;
     }
 
-    const hstring name = get_class_name(element);
+    const hstring className = get_class_name(element);
 
-    // Windows 11 builds have used this class for the actual task list button.
-    return name == L"Taskbar.TaskListButton";
+    // Application buttons.
+    if (className == L"Taskbar.TaskListButton") {
+        if (kind) *kind = IconKind::App;
+        return true;
+    }
+
+    // Start is an ExperienceToggleButton named LaunchListButton with the
+    // AutomationId StartButton on current Windows 11 taskbar builds.
+    if (className == L"Taskbar.ExperienceToggleButton" &&
+        element.Name() == L"LaunchListButton") {
+        if (kind) *kind = IconKind::Start;
+        return true;
+    }
+
+    return false;
 }
 
 void CollectTaskButtons(
@@ -246,7 +269,8 @@ void CollectTaskButtons(
             continue;
         }
 
-        if (IsTaskButton(child)) {
+        IconKind kind = IconKind::App;
+        if (IsScalableTaskElement(child, &kind)) {
             void* key = get_abi(child);
             if (key && seen.insert(key).second &&
                 child.Visibility() == Visibility::Visible &&
@@ -255,7 +279,7 @@ void CollectTaskButtons(
                 out.push_back(child);
             }
 
-            // Do not descend into a task button. We only want one transform
+            // Do not descend into a taskbar element. We only want one transform
             // per application button.
             continue;
         }
@@ -295,6 +319,32 @@ FrameworkElement FindButtonHost(
     }
 
     return nullptr;
+}
+
+void ReleaseTaskbarClipping(TaskbarState& state, FrameworkElement const& element) {
+    auto frame = state.frame.get();
+    if (!frame || !element) {
+        return;
+    }
+
+    try {
+        // XAML clipping on any ancestor can cut the scale exactly at the
+        // taskbar's visual bounds. Remove it only along this element's path.
+        FrameworkElement current = element;
+
+        for (int i = 0; i < 10 && current; ++i) {
+            current.Clip(nullptr);
+
+            if (get_abi(current) == get_abi(frame)) {
+                break;
+            }
+
+            current = current.Parent().try_as<FrameworkElement>();
+        }
+
+        frame.Clip(nullptr);
+    } catch (...) {
+    }
 }
 
 void ConfigureTransform(TaskbarState& state, IconState& icon) {
@@ -342,7 +392,7 @@ void ConfigureTransform(TaskbarState& state, IconState& icon) {
         }
 
         element.RenderTransformOrigin({0.5f, 0.5f});
-        element.SetValue(Controls::Canvas::ZIndexProperty(), winrt::box_value(1000));
+        element.SetValue(Controls::Canvas::ZIndexProperty(), winrt::box_value(10000));
 
         switch (state.edge) {
             case DockEdge::Bottom:
@@ -397,6 +447,12 @@ void RefreshIcons(TaskbarState& state) {
 
             IconState icon;
             icon.element = element;
+
+            IconKind kind = IconKind::App;
+            IsScalableTaskElement(element, &kind);
+            icon.kind = kind;
+
+            ReleaseTaskbarClipping(state, element);
             icon.size =
                 (state.edge == DockEdge::Left || state.edge == DockEdge::Right)
                     ? element.ActualHeight()
