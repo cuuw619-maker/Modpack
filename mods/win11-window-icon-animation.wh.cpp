@@ -499,7 +499,7 @@ RECT MakeStartRect(const RECT& targetRect, const RECT& iconRect) {
     const int targetH = targetRect.bottom - targetRect.top;
 
     const double aspect = targetH > 0 ? static_cast<double>(targetW) / targetH : 1.0;
-    int w = std::max(20, iconRect.right - iconRect.left);
+    int w = std::max(20, static_cast<int>(iconRect.right - iconRect.left));
     int h = std::max(20, static_cast<int>(std::lround(w / aspect)));
 
     const int cx = (iconRect.left + iconRect.right) / 2;
