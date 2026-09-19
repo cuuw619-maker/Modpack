@@ -341,7 +341,7 @@ void ConfigureTransform(TaskbarState& state, IconState& icon) {
         }
 
         element.RenderTransformOrigin({0.5f, 0.5f});
-        Controls::Panel::SetZIndex(element, 1000);
+        element.SetValue(Controls::Panel::ZIndexProperty(), winrt::box_value(1000));
 
         switch (state.edge) {
             case DockEdge::Bottom:
@@ -659,7 +659,8 @@ int WINAPI OnPointerMoved_Hook(void* thisPtr, void* argsPtr) {
         state.pointerInside = g_settings.enabled;
         state.edge = DetectEdge(state.hwnd);
 
-        const auto point = args.GetCurrentPoint(frame).Position();
+        auto pointerPoint = args.GetCurrentPoint(frame);
+        auto point = pointerPoint.Position();
         state.cursorAxis =
             (state.edge == DockEdge::Left ||
              state.edge == DockEdge::Right)
@@ -792,10 +793,10 @@ BOOL Wh_ModInit() {
             return FALSE;
         }
 
-        if (!WindhawkUtils::SetFunctionHook(
+        if (!Wh_SetFunctionHook(
                 reinterpret_cast<void*>(loadLibrary),
                 reinterpret_cast<void*>(LoadLibraryExW_Hook),
-                &LoadLibraryExW_Original)) {
+                reinterpret_cast<void**>(&LoadLibraryExW_Original))) {
             return FALSE;
         }
     }
@@ -833,7 +834,7 @@ void Wh_ModUninit() {
                     icon.translate.Y(0.0);
                 }
 
-                Controls::Panel::SetZIndex(element, 0);
+                element.SetValue(Controls::Panel::ZIndexProperty(), winrt::box_value(0));
                 element.RenderTransformOrigin({0.5f, 0.5f});
             } catch (...) {
             }
