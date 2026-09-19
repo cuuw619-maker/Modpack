@@ -1343,6 +1343,19 @@ void RunJob(Job* job) {
         return;
     }
 
+    // Explicitly show the layered popup before presenting frames.
+    // Keep it non-activating so it cannot steal focus from the real window.
+    ShowWindow(ghost, SW_SHOWNOACTIVATE);
+    SetWindowPos(
+        ghost,
+        HWND_TOPMOST,
+        left,
+        top,
+        canvasWidth,
+        canvasHeight,
+        SWP_NOACTIVATE |
+        SWP_SHOWWINDOW);
+
     bool firstPresented = false;
     const ULONGLONG started =
         GetTickCount64();
