@@ -2,7 +2,7 @@
 // @id              win11-window-icon-animation
 // @name            Windows 11 Window Icon Animation
 // @description     Smoothly grows windows from their Taskbar icon on launch and shrinks them back on close.
-// @version         0.1.0
+// @version         0.2.0
 // @author          cuuw619-maker
 // @github          https://github.com/cuuw619-maker/Modpack
 // @include         *
@@ -24,8 +24,9 @@ Launch:
 Close:
     Full window -> small window -> Taskbar icon
 
-The mod deliberately avoids a Genie mesh warp. It uses a lightweight
-layered ghost window with scale, position and opacity interpolation.
+The animation is fully replaced rather than layered on top of the native
+window transition. The real window is hidden during the motion and a
+layered ghost surface is animated between the Taskbar icon and the window.
 
 Windows 11 Taskbar coordinates are discovered through UI Automation, so
 the animation targets the real application button instead of a fixed
@@ -83,10 +84,6 @@ some frameworks don't expose a reliably capturable Win32 surface.
 #define DWMWA_EXTENDED_FRAME_BOUNDS 9
 #endif
 
-#ifndef DWMWA_CLOAK
-#define DWMWA_CLOAK 13
-#endif
-
 #ifndef DWMWA_TRANSITIONS_FORCEDISABLED
 #define DWMWA_TRANSITIONS_FORCEDISABLED 5
 #endif
@@ -117,11 +114,11 @@ ATOM g_ghostClass = 0;
 
 using ShowWindow_t = BOOL(WINAPI*)(HWND, int);
 using ShowWindowAsync_t = BOOL(WINAPI*)(HWND, int);
-using DefWindowProcW_t = LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
+using DispatchMessageW_t = LRESULT(WINAPI*)(const MSG*);
 
 ShowWindow_t ShowWindow_Original = nullptr;
 ShowWindowAsync_t ShowWindowAsync_Original = nullptr;
-DefWindowProcW_t DefWindowProcW_Original = nullptr;
+DispatchMessageW_t DispatchMessageW_Original = nullptr;
 
 constexpr wchar_t kBypassProp[] = L"Win11DockAnim.Bypass";
 
@@ -212,11 +209,6 @@ RECT GetVisualWindowRect(HWND hwnd) {
         GetWindowRect(hwnd, &rect);
     }
     return rect;
-}
-
-void SetCloaked(HWND hwnd, bool cloaked) {
-    BOOL value = cloaked ? TRUE : FALSE;
-    DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &value, sizeof(value));
 }
 
 void SetDwmTransitions(HWND hwnd, bool enabled) {
@@ -647,11 +639,10 @@ void RunAnimation(HWND target,
 
     if (!g_unloading) {
         if (!closeWindow && IsWindow(target)) {
-            SetCloaked(target, false);
             SetDwmTransitions(target, true);
         }
 
-        if (closeWindow) {
+        if (closeWindow && IsWindow(target)) {
             RemovePropW(target, kBypassProp);
         }
     }
@@ -659,7 +650,7 @@ void RunAnimation(HWND target,
     FreeAnimationState(target);
 }
 
-void StartLaunchAnimation(HWND hwnd) {
+void StartLaunchAnimation(HWND hwnd, int showCommand) {
     if (g_unloading || !g_settings.launchAnimation) return;
     if (!IsAnimatableWindow(hwnd) || IsExcluded(hwnd)) return;
 
@@ -671,19 +662,23 @@ void StartLaunchAnimation(HWND hwnd) {
     if (WasLaunchSeen(hwnd)) return;
     if (!MarkAnimationActive(hwnd)) return;
 
-    // Capture while the real window is still visible. Capturing after
-    // DWM cloak can return an empty/black frame on some applications.
+    const bool restoreForeground = GetForegroundWindow() == hwnd;
+
+    // The old implementation relied on DWM cloak. That is inconsistent
+    // across Win32/WinUI/Chromium windows, so the new path explicitly hides
+    // the real window and shows only our compositor ghost during the motion.
     Bitmap* bitmap = CaptureWindow(hwnd);
     if (!bitmap) {
         FreeAnimationState(hwnd);
         return;
     }
 
+    RECT targetRect = GetVisualWindowRect(hwnd);
     SetDwmTransitions(hwnd, false);
-    SetCloaked(hwnd, true);
+    ShowWindow(hwnd, SW_HIDE);
 
-    std::thread([hwnd, bitmap] {
-        TaskbarTarget taskbar = FindTaskbarButtonRetry(hwnd, 8, 50);
+    std::thread([hwnd, bitmap, targetRect, showCommand, restoreForeground] {
+        TaskbarTarget taskbar = FindTaskbarButtonRetry(hwnd, 10, 35);
 
         if (!IsWindow(hwnd)) {
             delete bitmap;
@@ -691,29 +686,44 @@ void StartLaunchAnimation(HWND hwnd) {
             return;
         }
 
-        RECT targetRect = GetVisualWindowRect(hwnd);
-
         RECT iconRect{};
         if (taskbar.valid) {
             iconRect = taskbar.rect;
         } else {
             const int size = std::max(20, g_settings.iconSize);
-            const POINT pt{targetRect.left + (targetRect.right - targetRect.left) / 2,
-                           targetRect.bottom};
-            iconRect = {pt.x - size / 2, pt.y - size / 2,
-                        pt.x + (size + 1) / 2, pt.y + (size + 1) / 2};
+            const POINT pt{
+                targetRect.left + (targetRect.right - targetRect.left) / 2,
+                targetRect.bottom
+            };
+            iconRect = {
+                pt.x - size / 2,
+                pt.y - size / 2,
+                pt.x + (size + 1) / 2,
+                pt.y + (size + 1) / 2
+            };
         }
 
-        RECT startRect = MakeStartRect(targetRect, iconRect);
+        const RECT startRect = MakeStartRect(targetRect, iconRect);
 
         RunAnimation(hwnd, bitmap, startRect, targetRect,
                      g_settings.launchDuration,
-                     static_cast<BYTE>(std::clamp(g_settings.startOpacity, 0, 100) * 255 / 100),
+                     static_cast<BYTE>(
+                         std::clamp(g_settings.startOpacity, 0, 100) * 255 / 100),
                      255, false);
+
+        if (!g_unloading && IsWindow(hwnd)) {
+            ShowWindow(hwnd, showCommand);
+            SetDwmTransitions(hwnd, true);
+
+            if (restoreForeground) {
+                SetForegroundWindow(hwnd);
+            }
+        }
     }).detach();
 }
 
-void StartCloseAnimation(HWND hwnd) {
+void StartCloseAnimation(HWND hwnd, UINT closeMessage,
+                        WPARAM closeWParam, LPARAM closeLParam) {
     if (g_unloading || !g_settings.closeAnimation) return;
     if (!IsAnimatableWindow(hwnd) || IsExcluded(hwnd)) return;
 
@@ -726,7 +736,7 @@ void StartCloseAnimation(HWND hwnd) {
     }
 
     const RECT targetRect = GetVisualWindowRect(hwnd);
-    TaskbarTarget taskbar = FindTaskbarButtonRetry(hwnd, 4, 25);
+    TaskbarTarget taskbar = FindTaskbarButtonRetry(hwnd, 6, 25);
 
     RECT iconRect{};
     if (taskbar.valid) {
@@ -736,26 +746,41 @@ void StartCloseAnimation(HWND hwnd) {
         iconRect = {
             targetRect.left + (targetRect.right - targetRect.left) / 2 - size / 2,
             targetRect.bottom - size / 2,
-            targetRect.left + (targetRect.right - targetRect.left) / 2 + (size + 1) / 2,
+            targetRect.left + (targetRect.right - targetRect.left) / 2 +
+                (size + 1) / 2,
             targetRect.bottom + (size + 1) / 2
         };
     }
 
     const RECT endRect = MakeStartRect(targetRect, iconRect);
 
+    // Stop the native close transition and immediately remove the real
+    // surface from the screen. The ghost becomes the only visible surface.
     SetDwmTransitions(hwnd, false);
-    SetCloaked(hwnd, true);
+    ShowWindow(hwnd, SW_HIDE);
 
-    std::thread([hwnd, bitmap, targetRect, endRect] {
-        // Close the real window while the ghost is covering it.
-        SetPropW(hwnd, kBypassProp, reinterpret_cast<HANDLE>(1));
-        PostMessageW(hwnd, WM_CLOSE, 0, 0);
-
+    std::thread([hwnd, bitmap, targetRect, endRect,
+                 closeMessage, closeWParam, closeLParam] {
         RunAnimation(hwnd, bitmap, targetRect, endRect,
                      g_settings.closeDuration,
                      255,
-                     static_cast<BYTE>(std::clamp(g_settings.closeEndOpacity, 0, 100) * 255 / 100),
+                     static_cast<BYTE>(
+                         std::clamp(g_settings.closeEndOpacity, 0, 100) * 255 / 100),
                      true);
+
+        if (!g_unloading && IsWindow(hwnd)) {
+            // Reinject the original close command once the visual animation
+            // is complete. DispatchMessageW_Hook bypasses our interception
+            // for this single message through the window property.
+            SetPropW(hwnd, kBypassProp, reinterpret_cast<HANDLE>(1));
+
+            if (closeMessage == WM_SYSCOMMAND) {
+                PostMessageW(hwnd, WM_SYSCOMMAND,
+                             closeWParam, closeLParam);
+            } else {
+                PostMessageW(hwnd, WM_CLOSE, closeWParam, closeLParam);
+            }
+        }
     }).detach();
 }
 
@@ -806,7 +831,7 @@ BOOL WINAPI ShowWindow_Hook(HWND hwnd, int cmd) {
         (cmd == SW_SHOW || cmd == SW_SHOWNORMAL ||
          cmd == SW_SHOWNOACTIVATE || cmd == SW_RESTORE)) {
 
-        StartLaunchAnimation(hwnd);
+        StartLaunchAnimation(hwnd, cmd);
     }
 
     return result;
@@ -832,20 +857,28 @@ BOOL WINAPI ShowWindowAsync_Hook(HWND hwnd, int cmd) {
     return result;
 }
 
-LRESULT WINAPI DefWindowProcW_Hook(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (!g_unloading &&
-        g_settings.closeAnimation &&
-        (msg == WM_CLOSE ||
-         (msg == WM_SYSCOMMAND && (wp & 0xFFF0u) == SC_CLOSE)) &&
+LRESULT WINAPI DispatchMessageW_Hook(const MSG* message) {
+    if (!message || g_unloading || !g_settings.closeAnimation) {
+        return DispatchMessageW_Original(message);
+    }
+
+    const HWND hwnd = message->hwnd;
+    const UINT msg = message->message;
+    const bool closeMessage =
+        msg == WM_CLOSE ||
+        (msg == WM_SYSCOMMAND &&
+         (message->wParam & 0xFFF0u) == SC_CLOSE);
+
+    if (closeMessage &&
         IsWindow(hwnd) &&
+        IsAnimatableWindow(hwnd) &&
         !IsExcluded(hwnd) &&
         !GetPropW(hwnd, kBypassProp)) {
-
-        StartCloseAnimation(hwnd);
+        StartCloseAnimation(hwnd, msg, message->wParam, message->lParam);
         return 0;
     }
 
-    return DefWindowProcW_Original(hwnd, msg, wp, lp);
+    return DispatchMessageW_Original(message);
 }
 
 BOOL Wh_ModInit() {
@@ -877,9 +910,9 @@ BOOL Wh_ModInit() {
     }
 
     if (!Wh_SetFunctionHook(
-            reinterpret_cast<void*>(DefWindowProcW),
-            reinterpret_cast<void*>(DefWindowProcW_Hook),
-            reinterpret_cast<void**>(&DefWindowProcW_Original))) {
+            reinterpret_cast<void*>(DispatchMessageW),
+            reinterpret_cast<void*>(DispatchMessageW_Hook),
+            reinterpret_cast<void**>(&DispatchMessageW_Original))) {
         return FALSE;
     }
 
