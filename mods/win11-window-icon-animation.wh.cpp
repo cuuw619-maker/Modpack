@@ -850,7 +850,7 @@ BOOL WINAPI ShowWindowAsync_Hook(HWND hwnd, int cmd) {
         (cmd == SW_SHOW || cmd == SW_SHOWNORMAL ||
          cmd == SW_SHOWNOACTIVATE || cmd == SW_RESTORE)) {
 
-        StartLaunchAnimation(hwnd);
+        StartLaunchAnimation(hwnd, cmd);
     }
 
     return result;
