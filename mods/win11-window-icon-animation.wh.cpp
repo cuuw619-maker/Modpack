@@ -2,7 +2,7 @@
 // @id              win11-window-icon-animation
 // @name            Windows 11 Genie Window Animation
 // @description     Custom genie-style launch, restore, minimize and close animation.
-// @version         0.5.0
+// @version         0.6.0
 // @author          cuuw619-maker
 // @github          https://github.com/cuuw619-maker/Modpack
 // @include         *
@@ -1567,6 +1567,125 @@ bool StartJob(Job* job) {
     return true;
 }
 
+// -----------------------------------------------------------------------------
+// Minimal animation baseline.
+// This deliberately does NOT use the old genie renderer. The first milestone
+// is to prove that our hooks visibly control the window itself. Once this works,
+// the same timeline can be replaced by a mesh/warp renderer.
+// -----------------------------------------------------------------------------
+
+double EaseBase(double value) {
+    value = std::clamp(value, 0.0, 1.0);
+    return value * value * (3.0 - 2.0 * value);
+}
+
+RECT LerpRect(const RECT& a, const RECT& b, double t) {
+    t = EaseBase(t);
+
+    RECT result{};
+    result.left = static_cast<LONG>(
+        std::lround(a.left + (b.left - a.left) * t));
+    result.top = static_cast<LONG>(
+        std::lround(a.top + (b.top - a.top) * t));
+    result.right = static_cast<LONG>(
+        std::lround(a.right + (b.right - a.right) * t));
+    result.bottom = static_cast<LONG>(
+        std::lround(a.bottom + (b.bottom - a.bottom) * t));
+
+    if (result.right <= result.left) {
+        result.right = result.left + 2;
+    }
+
+    if (result.bottom <= result.top) {
+        result.bottom = result.top + 2;
+    }
+
+    return result;
+}
+
+void AnimateWindowRectBase(
+    HWND hwnd,
+    const RECT& from,
+    const RECT& to,
+    bool fade,
+    int duration) {
+
+    const int frames =
+        std::max(8, duration / 12);
+
+    for (int i = 0; i <= frames; ++i) {
+        if (g_unloading.load(std::memory_order_relaxed) ||
+            !IsWindow(hwnd)) {
+            return;
+        }
+
+        const double progress =
+            static_cast<double>(i) /
+            static_cast<double>(frames);
+
+        const RECT rect =
+            LerpRect(from, to, progress);
+
+        SetWindowPos_Original(
+            hwnd,
+            nullptr,
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            SWP_NOZORDER |
+            SWP_NOACTIVATE);
+
+        if (fade) {
+            const double alpha =
+                1.0 - EaseBase(progress) * 0.65;
+
+            SetAlpha(
+                hwnd,
+                static_cast<BYTE>(
+                    std::clamp(
+                        static_cast<int>(
+                            std::lround(255.0 * alpha)),
+                        1,
+                        255)));
+        }
+
+        Sleep(
+            std::max(
+                1,
+                duration / frames));
+    }
+
+    if (IsWindow(hwnd) && fade) {
+        SetAlpha(hwnd, 255);
+    }
+}
+
+RECT MakeIconTarget(const RECT& iconRect) {
+    RECT target = iconRect;
+
+    // Give the baseline a small visible body. The later genie stage will
+    // replace this with a narrow neck and actual image deformation.
+    const LONG minWidth = 8;
+    const LONG minHeight = 8;
+
+    if (target.right - target.left < minWidth) {
+        const LONG cx =
+            (target.left + target.right) / 2;
+        target.left = cx - minWidth / 2;
+        target.right = target.left + minWidth;
+    }
+
+    if (target.bottom - target.top < minHeight) {
+        const LONG cy =
+            (target.top + target.bottom) / 2;
+        target.top = cy - minHeight / 2;
+        target.bottom = target.top + minHeight;
+    }
+
+    return target;
+}
+
 bool BeginMinimize(HWND hwnd) {
     if (g_unloading ||
         !g_settings.enabled ||
@@ -1581,54 +1700,33 @@ bool BeginMinimize(HWND hwnd) {
         return false;
     }
 
-    Frame* frame =
-        CaptureWindow(hwnd);
-
-    if (!frame) {
-        ClearActive(hwnd);
-        return false;
-    }
-
-    const RECT windowRect =
+    const RECT from =
         GetFrameRect(hwnd);
 
-    const RECT iconRect =
+    const RECT icon =
         GetIconRect(
             hwnd,
-            windowRect);
+            from);
 
-    // Hide the real window before Windows gets a chance to animate it.
-    // The only visible representation during minimize is our layered genie.
+    const RECT to =
+        MakeIconTarget(icon);
+
     DisableNativeTransitions(hwnd);
-    SetCloak(hwnd, true);
 
-    Job* job =
-        new Job();
+    // Base milestone: directly control the real HWND. No overlay, no mesh,
+    // no asynchronous compositor surface.
+    AnimateWindowRectBase(
+        hwnd,
+        from,
+        to,
+        true,
+        std::min(
+            g_settings.duration,
+            360));
 
-    job->hwnd = hwnd;
-    job->frame = frame;
-    job->windowRect = windowRect;
-    job->iconRect = iconRect;
-    job->toDock = true;
-    job->uncloakAtEnd = true;
-    job->firstFrame =
-        CreateEventW(
-            nullptr,
-            TRUE,
-            FALSE,
-            nullptr);
+    SetAlpha(hwnd, 255);
 
-    HANDLE first = job->firstFrame;
-
-    if (!StartJob(job)) {
-        SetCloak(hwnd, false);
-        EnableNativeTransitions(hwnd);
-        return false;
-    }
-
-    // The real window is already cloaked, so there is no reason to delay
-    // the original minimize call. This prevents the native transition from
-    // competing with the custom overlay.
+    ClearActive(hwnd);
     return true;
 }
 
@@ -1649,63 +1747,48 @@ bool BeginRestore(
         return false;
     }
 
-    // Keep the restored HWND invisible while we capture its final
-    // appearance. Alpha hiding is used here because a cloaked window can
-    // produce an empty PrintWindow result for GPU-rendered applications.
     DisableNativeTransitions(hwnd);
-    SetAlpha(hwnd, 0);
 
+    // Restore the real window first, then immediately place it at the
+    // Taskbar button size and grow it to its real rectangle.
     ShowWindow_Original(
         hwnd,
         command);
 
-    Sleep(20);
+    Sleep(12);
 
-    Frame* frame =
-        CaptureWindow(hwnd);
-
-    if (!frame) {
-        SetAlpha(hwnd, 255);
-        EnableNativeTransitions(hwnd);
-        ClearActive(hwnd);
-        return false;
-    }
-
-    // Capture first, then cloak the real HWND. The overlay becomes the only
-    // visible representation during the icon-to-window animation.
-    SetCloak(hwnd, true);
-
-    const RECT windowRect =
+    const RECT finalRect =
         GetFrameRect(hwnd);
 
-    const RECT iconRect =
+    const RECT icon =
         GetIconRect(
             hwnd,
-            windowRect);
+            finalRect);
 
-    SetPropW(
+    const RECT startRect =
+        MakeIconTarget(icon);
+
+    SetWindowPos_Original(
         hwnd,
-        kHiddenByUs,
-        reinterpret_cast<HANDLE>(1));
+        nullptr,
+        startRect.left,
+        startRect.top,
+        startRect.right - startRect.left,
+        startRect.bottom - startRect.top,
+        SWP_NOZORDER |
+        SWP_NOACTIVATE);
 
-    Job* job = new Job();
+    AnimateWindowRectBase(
+        hwnd,
+        startRect,
+        finalRect,
+        false,
+        std::min(
+            g_settings.duration,
+            360));
 
-    job->hwnd = hwnd;
-    job->frame = frame;
-    job->windowRect = windowRect;
-    job->iconRect = iconRect;
-    job->toDock = false;
-    job->revealReal = true;
-
-    if (!StartJob(job)) {
-        RemovePropW(
-            hwnd,
-            kHiddenByUs);
-        SetAlpha(hwnd, 255);
-        EnableNativeTransitions(hwnd);
-        ClearActive(hwnd);
-        return false;
-    }
+    EnableNativeTransitions(hwnd);
+    ClearActive(hwnd);
 
     return true;
 }
@@ -1730,56 +1813,45 @@ bool BeginLaunch(
     }
 
     DisableNativeTransitions(hwnd);
-    SetAlpha(hwnd, 0);
 
     ShowWindow_Original(
         hwnd,
         command);
 
-    Sleep(20);
+    Sleep(12);
 
-    Frame* frame =
-        CaptureWindow(hwnd);
-
-    if (!frame) {
-        SetAlpha(hwnd, 255);
-        EnableNativeTransitions(hwnd);
-        ClearActive(hwnd);
-        return false;
-    }
-
-    const RECT windowRect =
+    const RECT finalRect =
         GetFrameRect(hwnd);
 
-    const RECT iconRect =
+    const RECT icon =
         GetIconRect(
             hwnd,
-            windowRect);
+            finalRect);
 
-    SetPropW(
+    const RECT startRect =
+        MakeIconTarget(icon);
+
+    SetWindowPos_Original(
         hwnd,
-        kHiddenByUs,
-        reinterpret_cast<HANDLE>(1));
+        nullptr,
+        startRect.left,
+        startRect.top,
+        startRect.right - startRect.left,
+        startRect.bottom - startRect.top,
+        SWP_NOZORDER |
+        SWP_NOACTIVATE);
 
-    Job* job = new Job();
+    AnimateWindowRectBase(
+        hwnd,
+        startRect,
+        finalRect,
+        false,
+        std::min(
+            g_settings.duration,
+            360));
 
-    job->hwnd = hwnd;
-    job->frame = frame;
-    job->windowRect = windowRect;
-    job->iconRect = iconRect;
-    job->toDock = false;
-    job->revealReal = true;
-
-    if (!StartJob(job)) {
-        RemovePropW(
-            hwnd,
-            kHiddenByUs);
-        SetCloak(hwnd, false);
-        SetAlpha(hwnd, 255);
-        EnableNativeTransitions(hwnd);
-        ClearActive(hwnd);
-        return false;
-    }
+    EnableNativeTransitions(hwnd);
+    ClearActive(hwnd);
 
     return true;
 }
@@ -1803,44 +1875,50 @@ bool BeginClose(
         return false;
     }
 
-    Frame* frame =
-        CaptureWindow(hwnd);
-
-    if (!frame) {
-        ClearActive(hwnd);
-        return false;
-    }
-
-    const RECT windowRect =
+    const RECT from =
         GetFrameRect(hwnd);
 
-    const RECT iconRect =
+    const RECT icon =
         GetIconRect(
             hwnd,
-            windowRect);
+            from);
+
+    const RECT to =
+        MakeIconTarget(icon);
 
     DisableNativeTransitions(hwnd);
-    SetCloak(hwnd, true);
 
-    Job* job = new Job();
+    AnimateWindowRectBase(
+        hwnd,
+        from,
+        to,
+        true,
+        std::min(
+            g_settings.duration,
+            360));
 
-    job->hwnd = hwnd;
-    job->frame = frame;
-    job->windowRect = windowRect;
-    job->iconRect = iconRect;
-    job->toDock = true;
-    job->finishClose = true;
-    job->closeMessage = message;
-    job->closeWParam = wParam;
-    job->closeLParam = lParam;
+    if (IsWindow(hwnd)) {
+        SetPropW(
+            hwnd,
+            kCloseBypass,
+            reinterpret_cast<HANDLE>(1));
 
-    if (!StartJob(job)) {
-        SetCloak(hwnd, false);
-        EnableNativeTransitions(hwnd);
-        ClearActive(hwnd);
-        return false;
+        if (message == WM_SYSCOMMAND) {
+            PostMessageW(
+                hwnd,
+                WM_SYSCOMMAND,
+                wParam,
+                lParam);
+        } else {
+            PostMessageW(
+                hwnd,
+                WM_CLOSE,
+                wParam,
+                lParam);
+        }
     }
 
+    ClearActive(hwnd);
     return true;
 }
 
@@ -2221,91 +2299,6 @@ BOOL WINAPI SetWindowPos_Hook(
     int cx,
     int cy,
     UINT flags) {
-
-    if ((flags & SWP_SHOWWINDOW) &&
-        !IsWindowVisible(hwnd) &&
-        !IsIconic(hwnd) &&
-        g_settings.enabled &&
-        g_settings.launchAnimation &&
-        IsAnimatableWindow(hwnd) &&
-        !IsExcluded(hwnd)) {
-
-        if (MarkLaunchSeen(hwnd) &&
-            MarkActive(hwnd)) {
-
-            DisableNativeTransitions(
-                hwnd);
-
-            SetAlpha(hwnd, 0);
-
-            BOOL result =
-                SetWindowPos_Original(
-                    hwnd,
-                    insertAfter,
-                    x,
-                    y,
-                    cx,
-                    cy,
-                    flags);
-
-            Sleep(15);
-
-            Frame* frame =
-                CaptureWindow(hwnd);
-
-            if (!frame) {
-                SetAlpha(
-                    hwnd,
-                    255);
-                EnableNativeTransitions(
-                    hwnd);
-                ClearActive(hwnd);
-                return result;
-            }
-
-            const RECT windowRect =
-                GetFrameRect(hwnd);
-
-            const RECT iconRect =
-                GetIconRect(
-                    hwnd,
-                    windowRect);
-
-            SetPropW(
-                hwnd,
-                kHiddenByUs,
-                reinterpret_cast<HANDLE>(1));
-
-            Job* job =
-                new Job();
-
-            job->hwnd = hwnd;
-            job->frame = frame;
-            job->windowRect =
-                windowRect;
-            job->iconRect =
-                iconRect;
-            job->toDock =
-                false;
-            job->revealReal =
-                true;
-
-            if (!StartJob(job)) {
-                RemovePropW(
-                    hwnd,
-                    kHiddenByUs);
-
-                SetAlpha(
-                    hwnd,
-                    255);
-                EnableNativeTransitions(
-                    hwnd);
-                ClearActive(hwnd);
-            }
-
-            return result;
-        }
-    }
 
     return SetWindowPos_Original(
         hwnd,
