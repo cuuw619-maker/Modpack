@@ -262,6 +262,20 @@ void SetCloak(HWND hwnd, bool value) {
         &cloak, sizeof(cloak));
 }
 
+void DisableNativeTransitions(HWND hwnd) {
+    SetDwmTransitions(hwnd, false);
+}
+
+void EnableNativeTransitions(HWND hwnd) {
+    SetDwmTransitions(hwnd, true);
+}
+
+void SignalFirstFrame(Job* job) {
+    if (job && job->firstFrame) {
+        SetEvent(job->firstFrame);
+    }
+}
+
 void EnsureLayered(HWND hwnd) {
     LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
 
