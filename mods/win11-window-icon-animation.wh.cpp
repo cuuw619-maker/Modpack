@@ -2,7 +2,7 @@
 // @id              win11-window-icon-animation
 // @name            Windows 11 Genie Window Animation
 // @description     Custom genie-style launch, restore, minimize and close animation.
-// @version         0.6.0
+// @version         0.6.1
 // @author          cuuw619-maker
 // @github          https://github.com/cuuw619-maker/Modpack
 // @include         *
@@ -1892,7 +1892,7 @@ bool BeginClose(
         hwnd,
         from,
         to,
-        true,
+        false,
         std::min(
             g_settings.duration,
             360));
