@@ -690,6 +690,10 @@ int WINAPI OnPointerExited_Hook(void* thisPtr, void* argsPtr) {
 }
 
 bool HookTaskbarView(HMODULE module) {
+    if (g_taskbarHookInstalled) {
+        return true;
+    }
+
     WindhawkUtils::SYMBOL_HOOK hooks[] = {
         {
             {
@@ -707,7 +711,12 @@ bool HookTaskbarView(HMODULE module) {
         }
     };
 
-    return HookSymbols(module, hooks, ARRAYSIZE(hooks));
+    if (!HookSymbols(module, hooks, ARRAYSIZE(hooks))) {
+        return false;
+    }
+
+    g_taskbarHookInstalled = true;
+    return true;
 }
 
 HMODULE FindTaskbarViewModule() {
