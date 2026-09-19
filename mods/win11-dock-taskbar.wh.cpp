@@ -1,6 +1,6 @@
 // ==WindhawkMod==
-// @id                taskbar-dock-animation-plus
-// @name              Taskbar Dock Animation Plus
+// @id                cuuw619-win11-dock-taskbar
+// @name              Win11 Dock Taskbar
 // @name:zh-CN        任务栏 Dock 动画增强版
 // @name:ja-JP        タスクバー Dock アニメーション Plus
 // @name:ko-KR        작업 표시줄 Dock 애니메이션 Plus
@@ -13,7 +13,7 @@
 // @description:ko-KR macOS처럼 마우스를 올리면 작업 표시줄 아이콘이 애니메이션됩니다 (모든 작업 표시줄 위치 지원 및 멀티 모니터 버그가 수정된 업데이트 버전)
 // @description:pt-BR Anima os ícones da barra de tarefas ao passar o mouse, como no macOS (versão atualizada com suporte para todas as posições da barra e correções para múltiplos monitores)
 // @description:it-IT Anima le icone della barra delle applicazioni al passaggio del mouse, come su macOS (versione aggiornata con supporto per tutte le posizioni della barra e correzioni multi-monitor)
-// @version           2.0.1
+// @version           0.1.0
 // @author            incconutwo
 // @github            https://github.com/incconutwo
 // @include           explorer.exe
@@ -82,7 +82,7 @@ This mod is a fork of the original [Taskbar Dock Animation](https://windhawk.net
   $description:ko-KR: 확대/축소 애니메이션 느낌 선택 (0=코사인(부드러움), 1=선형, 2=지수(빠릿함))
   $description:pt-BR: Escolha o tipo de escala (0 = Cosseno (suave), 1 = Linear, 2 = Exponencial (rápido))
   $description:it-IT: Scegli il tipo di scala (0 = Coseno (fluida), 1 = Lineare, 2 = Esponenziale (reattiva))
-- MaxScale: 130
+- MaxScale: 145
   $name: Maximum scale (%)
   $name:uk-UA: Максимальний розмір (%)
   $name:zh-CN: 最大缩放（%）
@@ -97,7 +97,7 @@ This mod is a fork of the original [Taskbar Dock Animation](https://windhawk.net
   $description:ko-KR: "아이콘이 커질 수 있는 최대 크기 (예: 160 = +60%)"
   $description:pt-BR: "Até quanto o ícone pode aumentar (ex.: 160 = +60%)"
   $description:it-IT: "Quanto può ingrandirsi un’icona (es.: 160 = +60%)"
-- EffectRadius: 100
+- EffectRadius: 120
   $name: Effect radius (px)
   $name:uk-UA: Радіус ефекту (пкс)
   $name:zh-CN: 效果半径（像素）
@@ -112,7 +112,7 @@ This mod is a fork of the original [Taskbar Dock Animation](https://windhawk.net
   $description:ko-KR: 커서로부터 애니메이션이 적용되는 거리
   $description:pt-BR: Distância do cursor em que a animação é aplicada
   $description:it-IT: Distanza dal cursore entro cui si applica l’animazione
-- SpacingFactor: 50
+- SpacingFactor: 55
   $name: Spacing sensitivity (%)
   $name:uk-UA: Чутливість до проміжку (%)
   $name:zh-CN: 间距灵敏度（%）
@@ -217,7 +217,7 @@ This mod is a fork of the original [Taskbar Dock Animation](https://windhawk.net
   $description:ko-KR: 높을수록 빠릿함, 낮을수록 부드러움. 0=비활성화(직접)
   $description:pt-BR: Maior = mais rápido, menor = mais suave. 0 = desativado (direto)
   $description:it-IT: Più alto = più reattivo, più basso = più fluido. 0 = disattivato (diretto)
-- DisableBounce: false
+- DisableBounce: true
   $name: Disable bounce effect
   $name:uk-UA: Вимкнути bounce ефект
   $name:zh-CN: 禁用弹跳效果
