@@ -7,7 +7,7 @@
 // @github          https://github.com/cuuw619-maker/Modpack
 // @include         *
 // @architecture    x86-64
-// @compilerOptions -ldwmapi -luiautomationcore -lole32 -luser32 -lgdi32
+// @compilerOptions -ldwmapi -luiautomationcore -lole32 -loleaut32 -luser32 -lgdi32
 // @license         MIT
 // ==/WindhawkMod==
 
