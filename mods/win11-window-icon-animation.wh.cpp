@@ -158,6 +158,10 @@ struct Job {
     HANDLE firstFrame = nullptr;
 };
 
+void DisableNativeTransitions(HWND hwnd);
+void EnableNativeTransitions(HWND hwnd);
+void SignalFirstFrame(Job* job);
+
 std::wstring Lower(std::wstring value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](wchar_t c) {
@@ -1245,6 +1249,9 @@ void RunJob(Job* job) {
         }
         delete frame;
         SignalFirstFrame(job);
+        if (job->firstFrame) {
+            CloseHandle(job->firstFrame);
+        }
         ClearActive(job->hwnd);
         delete job;
         return;
@@ -1287,6 +1294,9 @@ void RunJob(Job* job) {
         ReleaseDC(nullptr, screen);
         delete frame;
         SignalFirstFrame(job);
+        if (job->firstFrame) {
+            CloseHandle(job->firstFrame);
+        }
         ClearActive(job->hwnd);
         delete job;
         return;
@@ -1325,6 +1335,9 @@ void RunJob(Job* job) {
         ReleaseDC(nullptr, screen);
         delete frame;
         SignalFirstFrame(job);
+        if (job->firstFrame) {
+            CloseHandle(job->firstFrame);
+        }
         ClearActive(job->hwnd);
         delete job;
         return;
@@ -1474,6 +1487,9 @@ void RunJob(Job* job) {
 
     delete frame;
     ClearActive(job->hwnd);
+    if (job->firstFrame) {
+        CloseHandle(job->firstFrame);
+    }
     delete job;
 }
 
@@ -1570,7 +1586,6 @@ bool BeginMinimize(HWND hwnd) {
         WaitForSingleObject(
             first,
             150);
-        CloseHandle(first);
     }
 
     return true;
