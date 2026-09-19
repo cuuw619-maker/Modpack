@@ -489,10 +489,8 @@ RECT InterpolateRect(const RECT& a, const RECT& b, double t) {
     RECT out{};
     out.left = static_cast<LONG>(std::lround(a.left + (b.left - a.left) * t));
     out.top = static_cast<LONG>(std::lround(a.top + (b.top - a.top) * t));
-    out.right = static_cast<LONG>(std::lround(a.right + (b.right - b.left) * t +
-                                               (a.right - a.left) * t));
-    out.bottom = static_cast<LONG>(std::lround(a.bottom + (b.bottom - b.top) * t +
-                                                (a.bottom - a.top) * t));
+    out.right = static_cast<LONG>(std::lround(a.right + (b.right - a.right) * t));
+    out.bottom = static_cast<LONG>(std::lround(a.bottom + (b.bottom - a.bottom) * t));
     return out;
 }
 
@@ -625,7 +623,7 @@ void RunAnimation(HWND target,
     const auto startTime = std::chrono::steady_clock::now();
     duration = std::clamp(duration, 50, 1000);
 
-    while (!g_unloading && IsWindow(target)) {
+    while (!g_unloading && (closeWindow || IsWindow(target))) {
         const auto now = std::chrono::steady_clock::now();
         const double elapsed =
             std::chrono::duration<double, std::milli>(now - startTime).count();
@@ -647,19 +645,14 @@ void RunAnimation(HWND target,
 
     delete bitmap;
 
-    if (!g_unloading && IsWindow(target)) {
-        SetCloaked(target, false);
-        SetDwmTransitions(target, true);
+    if (!g_unloading) {
+        if (!closeWindow && IsWindow(target)) {
+            SetCloaked(target, false);
+            SetDwmTransitions(target, true);
+        }
 
         if (closeWindow) {
-            SetPropW(target, kBypassProp, reinterpret_cast<HANDLE>(1));
-            PostMessageW(target, WM_CLOSE, 0, 0);
-            std::thread([target] {
-                for (int i = 0; i < 200 && IsWindow(target); ++i) {
-                    Sleep(10);
-                }
-                RemovePropW(target, kBypassProp);
-            }).detach();
+            RemovePropW(target, kBypassProp);
         }
     }
 
