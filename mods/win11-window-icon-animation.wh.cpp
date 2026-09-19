@@ -642,9 +642,6 @@ void RunAnimation(HWND target,
             SetDwmTransitions(target, true);
         }
 
-        if (closeWindow && IsWindow(target)) {
-            RemovePropW(target, kBypassProp);
-        }
     }
 
     FreeAnimationState(target);
@@ -754,6 +751,10 @@ void StartCloseAnimation(HWND hwnd, UINT closeMessage,
 
     const RECT endRect = MakeStartRect(targetRect, iconRect);
 
+    // Mark the real close command as our deferred command before any work
+    // begins. The dispatch hook will pass only this deferred message through.
+    SetPropW(hwnd, kBypassProp, reinterpret_cast<HANDLE>(1));
+
     // Stop the native close transition and immediately remove the real
     // surface from the screen. The ghost becomes the only visible surface.
     SetDwmTransitions(hwnd, false);
@@ -770,10 +771,8 @@ void StartCloseAnimation(HWND hwnd, UINT closeMessage,
 
         if (!g_unloading && IsWindow(hwnd)) {
             // Reinject the original close command once the visual animation
-            // is complete. DispatchMessageW_Hook bypasses our interception
-            // for this single message through the window property.
-            SetPropW(hwnd, kBypassProp, reinterpret_cast<HANDLE>(1));
-
+            // is complete. DispatchMessageW_Hook sees the bypass property and
+            // lets this one close message reach the application unchanged.
             if (closeMessage == WM_SYSCOMMAND) {
                 PostMessageW(hwnd, WM_SYSCOMMAND,
                              closeWParam, closeLParam);
@@ -872,8 +871,12 @@ LRESULT WINAPI DispatchMessageW_Hook(const MSG* message) {
     if (closeMessage &&
         IsWindow(hwnd) &&
         IsAnimatableWindow(hwnd) &&
-        !IsExcluded(hwnd) &&
-        !GetPropW(hwnd, kBypassProp)) {
+        !IsExcluded(hwnd)) {
+        if (GetPropW(hwnd, kBypassProp)) {
+            RemovePropW(hwnd, kBypassProp);
+            return DispatchMessageW_Original(message);
+        }
+
         StartCloseAnimation(hwnd, msg, message->wParam, message->lParam);
         return 0;
     }
