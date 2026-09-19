@@ -341,7 +341,7 @@ void ConfigureTransform(TaskbarState& state, IconState& icon) {
         }
 
         element.RenderTransformOrigin({0.5f, 0.5f});
-        Panel::SetZIndex(element, 1000);
+        Controls::Panel::SetZIndex(element, 1000);
 
         switch (state.edge) {
             case DockEdge::Bottom:
@@ -833,7 +833,7 @@ void Wh_ModUninit() {
                     icon.translate.Y(0.0);
                 }
 
-                Panel::SetZIndex(element, 0);
+                Controls::Panel::SetZIndex(element, 0);
                 element.RenderTransformOrigin({0.5f, 0.5f});
             } catch (...) {
             }
