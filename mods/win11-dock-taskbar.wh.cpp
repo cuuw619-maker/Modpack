@@ -54,8 +54,6 @@ Only Windows 11 Explorer taskbar elements are modified.
 #undef GetCurrentTime
 
 #include <windows.h>
-#include <windows.foundation.h>
-
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.Xaml.h>
@@ -131,6 +129,11 @@ using LoadLibraryExW_t = decltype(&LoadLibraryExW);
 LoadLibraryExW_t LoadLibraryExW_Original = nullptr;
 
 constexpr wchar_t kClassName[] = L"Taskbar.TaskbarFrame";
+bool g_taskbarHookInstalled = false;
+
+void CALLBACK OnRendering(
+    const Windows::Foundation::IInspectable&,
+    const Windows::Foundation::IInspectable&);
 
 HWND GetTaskbarWindowForThread() {
     const DWORD tid = GetCurrentThreadId();
