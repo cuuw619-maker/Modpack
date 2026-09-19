@@ -1649,24 +1649,31 @@ bool BeginRestore(
         return false;
     }
 
+    // Keep the restored HWND invisible while we capture its final
+    // appearance. Alpha hiding is used here because a cloaked window can
+    // produce an empty PrintWindow result for GPU-rendered applications.
     DisableNativeTransitions(hwnd);
-    SetCloak(hwnd, true);
+    SetAlpha(hwnd, 0);
 
     ShowWindow_Original(
         hwnd,
         command);
 
-    Sleep(12);
+    Sleep(20);
 
     Frame* frame =
         CaptureWindow(hwnd);
 
     if (!frame) {
-        SetCloak(hwnd, false);
+        SetAlpha(hwnd, 255);
         EnableNativeTransitions(hwnd);
         ClearActive(hwnd);
         return false;
     }
+
+    // Capture first, then cloak the real HWND. The overlay becomes the only
+    // visible representation during the icon-to-window animation.
+    SetCloak(hwnd, true);
 
     const RECT windowRect =
         GetFrameRect(hwnd);
@@ -1694,7 +1701,7 @@ bool BeginRestore(
         RemovePropW(
             hwnd,
             kHiddenByUs);
-        SetCloak(hwnd, false);
+        SetAlpha(hwnd, 255);
         EnableNativeTransitions(hwnd);
         ClearActive(hwnd);
         return false;
@@ -1767,6 +1774,7 @@ bool BeginLaunch(
         RemovePropW(
             hwnd,
             kHiddenByUs);
+        SetCloak(hwnd, false);
         SetAlpha(hwnd, 255);
         EnableNativeTransitions(hwnd);
         ClearActive(hwnd);
