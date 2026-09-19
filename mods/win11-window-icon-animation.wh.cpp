@@ -671,17 +671,22 @@ void StartLaunchAnimation(HWND hwnd) {
     if (WasLaunchSeen(hwnd)) return;
     if (!MarkAnimationActive(hwnd)) return;
 
+    // Capture while the real window is still visible. Capturing after
+    // DWM cloak can return an empty/black frame on some applications.
+    Bitmap* bitmap = CaptureWindow(hwnd);
+    if (!bitmap) {
+        FreeAnimationState(hwnd);
+        return;
+    }
+
     SetDwmTransitions(hwnd, false);
     SetCloaked(hwnd, true);
 
-    std::thread([hwnd] {
+    std::thread([hwnd, bitmap] {
         TaskbarTarget taskbar = FindTaskbarButtonRetry(hwnd, 8, 50);
-        Bitmap* bitmap = CaptureWindow(hwnd);
 
-        if (!bitmap || !IsWindow(hwnd)) {
+        if (!IsWindow(hwnd)) {
             delete bitmap;
-            SetCloaked(hwnd, false);
-            SetDwmTransitions(hwnd, true);
             FreeAnimationState(hwnd);
             return;
         }
