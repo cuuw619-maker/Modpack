@@ -2,7 +2,7 @@
 // @id              win11-window-icon-animation
 // @name            Windows 11 Genie Window Animation
 // @description     Custom genie-style launch, restore, minimize and close animation.
-// @version         0.4.0
+// @version         0.5.0
 // @author          cuuw619-maker
 // @github          https://github.com/cuuw619-maker/Modpack
 // @include         *
@@ -151,6 +151,7 @@ struct Job {
     RECT iconRect{};
     bool toDock = true;
     bool revealReal = false;
+    bool uncloakAtEnd = false;
     bool finishClose = false;
     UINT closeMessage = WM_CLOSE;
     WPARAM closeWParam = 0;
@@ -1252,6 +1253,10 @@ void RunJob(Job* job) {
         if (job->firstFrame) {
             CloseHandle(job->firstFrame);
         }
+        if (job->uncloakAtEnd && IsWindow(job->hwnd)) {
+            SetCloak(job->hwnd, false);
+            EnableNativeTransitions(job->hwnd);
+        }
         ClearActive(job->hwnd);
         delete job;
         return;
@@ -1297,6 +1302,10 @@ void RunJob(Job* job) {
         if (job->firstFrame) {
             CloseHandle(job->firstFrame);
         }
+        if (job->uncloakAtEnd && IsWindow(job->hwnd)) {
+            SetCloak(job->hwnd, false);
+            EnableNativeTransitions(job->hwnd);
+        }
         ClearActive(job->hwnd);
         delete job;
         return;
@@ -1337,6 +1346,10 @@ void RunJob(Job* job) {
         SignalFirstFrame(job);
         if (job->firstFrame) {
             CloseHandle(job->firstFrame);
+        }
+        if (job->uncloakAtEnd && IsWindow(job->hwnd)) {
+            SetCloak(job->hwnd, false);
+            EnableNativeTransitions(job->hwnd);
         }
         ClearActive(job->hwnd);
         delete job;
@@ -1442,6 +1455,19 @@ void RunJob(Job* job) {
                     job->hwnd,
                     kHiddenByUs);
             }
+
+            EnableNativeTransitions(
+                job->hwnd);
+
+        } else if (job->uncloakAtEnd &&
+                   IsWindow(job->hwnd)) {
+
+            // Minimize path: the real HWND stayed cloaked while the
+            // overlay performed the deformation. Release the cloak only
+            // after the custom animation has finished.
+            SetCloak(
+                job->hwnd,
+                false);
 
             EnableNativeTransitions(
                 job->hwnd);
@@ -1571,7 +1597,10 @@ bool BeginMinimize(HWND hwnd) {
             hwnd,
             windowRect);
 
+    // Hide the real window before Windows gets a chance to animate it.
+    // The only visible representation during minimize is our layered genie.
     DisableNativeTransitions(hwnd);
+    SetCloak(hwnd, true);
 
     Job* job =
         new Job();
@@ -1581,6 +1610,7 @@ bool BeginMinimize(HWND hwnd) {
     job->windowRect = windowRect;
     job->iconRect = iconRect;
     job->toDock = true;
+    job->uncloakAtEnd = true;
     job->firstFrame =
         CreateEventW(
             nullptr,
@@ -1591,16 +1621,14 @@ bool BeginMinimize(HWND hwnd) {
     HANDLE first = job->firstFrame;
 
     if (!StartJob(job)) {
+        SetCloak(hwnd, false);
         EnableNativeTransitions(hwnd);
         return false;
     }
 
-    if (first) {
-        WaitForSingleObject(
-            first,
-            150);
-    }
-
+    // The real window is already cloaked, so there is no reason to delay
+    // the original minimize call. This prevents the native transition from
+    // competing with the custom overlay.
     return true;
 }
 
